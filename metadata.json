@@ -1,0 +1,6 @@
+{
+  "name": "CARISAJI — Pencari Restoran Cepat Saji Pangkalpinang",
+  "description": "Aplikasi web geospasial pencari restoran cepat saji di Kota Pangkalpinang dengan peta interaktif OpenStreetMap, daftar menu, ulasan pelanggan, dan dasbor admin.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
