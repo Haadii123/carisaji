@@ -1,5 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Clock, ExternalLink, MapPin, Search, Star, Utensils } from 'lucide-react';
+import {
+  Clock,
+  ExternalLink,
+  Heart,
+  MapPin,
+  Search,
+  Star,
+  Utensils,
+} from 'lucide-react';
 import type { BrandFilter, Restaurant } from '../types';
 import {
   BRAND_OPTIONS,
@@ -12,6 +20,8 @@ interface RestaurantListProps {
   restaurants: Restaurant[];
   loading: boolean;
   error: string;
+  favoriteIds: number[];
+  onToggleFavorite: (id: number) => void;
   onRetry: () => void;
   onSelectRestaurant: (id: number) => void;
 }
@@ -20,11 +30,15 @@ export function RestaurantList({
   restaurants,
   loading,
   error,
+  favoriteIds,
+  onToggleFavorite,
   onRetry,
   onSelectRestaurant,
 }: RestaurantListProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<BrandFilter>('Semua');
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [only24Hours, setOnly24Hours] = useState(false);
   const [failedImages, setFailedImages] = useState<Record<number, boolean>>({});
 
   const filtered = useMemo(() => {
@@ -32,14 +46,25 @@ export function RestaurantList({
       const brandMatch =
         selectedBrand === 'Semua' ||
         detectRestaurantBrand(r.name) === selectedBrand;
+      const favMatch =
+        !onlyFavorites || favoriteIds.includes(r.restaurant_id);
+      const hoursMatch =
+        !only24Hours || r.operating_hours.toLowerCase().includes('24 jam');
       const q = searchQuery.trim().toLowerCase();
       const queryMatch =
         !q ||
         r.name.toLowerCase().includes(q) ||
         r.address.toLowerCase().includes(q);
-      return brandMatch && queryMatch;
+      return brandMatch && favMatch && hoursMatch && queryMatch;
     });
-  }, [restaurants, selectedBrand, searchQuery]);
+  }, [
+    restaurants,
+    selectedBrand,
+    onlyFavorites,
+    only24Hours,
+    favoriteIds,
+    searchQuery,
+  ]);
 
   return (
     <section
@@ -77,29 +102,66 @@ export function RestaurantList({
         </div>
       </div>
 
-      {/* Filter Merek (Tombol Interaktif) */}
-      <div
-        className="mt-5 flex flex-wrap items-center gap-1.5"
-        role="group"
-        aria-label="Filter berdasarkan merek"
-      >
-        {BRAND_OPTIONS.map((brand) => {
-          const active = selectedBrand === brand;
-          return (
-            <button
-              key={brand}
-              type="button"
-              onClick={() => setSelectedBrand(brand)}
-              className={`rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                active
-                  ? 'bg-zinc-900 text-white'
-                  : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100'
+      {/* Filter Merek & Preferensi (Tombol Interaktif) */}
+      <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          role="group"
+          aria-label="Filter berdasarkan merek"
+        >
+          {BRAND_OPTIONS.map((brand) => {
+            const active = selectedBrand === brand;
+            return (
+              <button
+                key={brand}
+                type="button"
+                onClick={() => setSelectedBrand(brand)}
+                className={`rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  active
+                    ? 'bg-zinc-900 text-white'
+                    : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100'
+                }`}
+              >
+                {brand}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            aria-pressed={onlyFavorites}
+            onClick={() => setOnlyFavorites((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              onlyFavorites
+                ? 'bg-red-600 text-white'
+                : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100'
+            }`}
+          >
+            <Heart
+              className={`h-3.5 w-3.5 ${
+                onlyFavorites ? 'fill-white text-white' : 'text-red-500'
               }`}
-            >
-              {brand}
-            </button>
-          );
-        })}
+            />
+            <span className="tabular-nums">
+              Favorit Saya ({favoriteIds.length})
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={only24Hours}
+            onClick={() => setOnly24Hours((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              only24Hours
+                ? 'bg-zinc-900 text-white'
+                : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100'
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" />
+            <span>Buka 24 Jam</span>
+          </button>
+        </div>
       </div>
 
       {/* State Error */}
@@ -153,6 +215,8 @@ export function RestaurantList({
             onClick={() => {
               setSearchQuery('');
               setSelectedBrand('Semua');
+              setOnlyFavorites(false);
+              setOnly24Hours(false);
             }}
             className="mt-4 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer"
           >
@@ -240,13 +304,32 @@ export function RestaurantList({
                       </p>
                     </div>
 
-                    <div className="mt-5 flex items-center gap-2.5 border-t border-zinc-100 pt-4">
+                    <div className="mt-5 flex items-center gap-2 border-t border-zinc-100 pt-4">
                       <button
                         type="button"
                         onClick={() => onSelectRestaurant(r.restaurant_id)}
                         className="flex-1 rounded-lg bg-red-600 px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-red-700 transition-colors whitespace-nowrap cursor-pointer"
                       >
-                        Lihat Menu &amp; Ulasan
+                        Pesan, Menu &amp; Ulasan
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={
+                          favoriteIds.includes(r.restaurant_id)
+                            ? `Hapus ${r.name} dari favorit`
+                            : `Simpan ${r.name} ke favorit`
+                        }
+                        aria-pressed={favoriteIds.includes(r.restaurant_id)}
+                        onClick={() => onToggleFavorite(r.restaurant_id)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors cursor-pointer shrink-0"
+                      >
+                        <Heart
+                          className={`h-4 w-4 ${
+                            favoriteIds.includes(r.restaurant_id)
+                              ? 'fill-red-600 text-red-600'
+                              : 'text-zinc-400'
+                          }`}
+                        />
                       </button>
                       <a
                         href={getGoogleMapsDirectionsUrl(

@@ -1,7 +1,23 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { ExternalLink, MapPin, Star, Utensils, X } from 'lucide-react';
+import {
+  Clock,
+  ExternalLink,
+  Heart,
+  MapPin,
+  Plus,
+  ShoppingBag,
+  Star,
+  Utensils,
+  X,
+} from 'lucide-react';
 import { api } from '../services/api';
-import type { RestaurantDetail, User } from '../types';
+import type {
+  CartItem,
+  MenuItem,
+  Order,
+  RestaurantDetail,
+  User,
+} from '../types';
 import {
   detectRestaurantBrand,
   formatRupiah,
@@ -10,26 +26,40 @@ import {
   groupMenusByCategory,
 } from '../utils/format';
 import { getGoogleMapsDirectionsUrl } from '../utils/geo';
+import { calculateDynamicEta } from '../utils/eta';
+import { calculateCartTotal } from '../utils/order';
+import { OrderCheckoutPanel } from './OrderCheckoutPanel';
 
 interface RestaurantDetailModalProps {
   restaurantId: number | null;
   user: User | null;
+  isFavorite: boolean;
+  onToggleFavorite: (id: number) => void;
   onClose: () => void;
   onRequireLogin: () => void;
   onReviewSubmitted: () => void;
+  onOrderCreated: (order: Order) => void;
 }
 
 export function RestaurantDetailModal({
   restaurantId,
   user,
+  isFavorite,
+  onToggleFavorite,
   onClose,
   onRequireLogin,
   onReviewSubmitted,
+  onOrderCreated,
 }: RestaurantDetailModalProps) {
   const [detail, setDetail] = useState<RestaurantDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [imageFailed, setImageFailed] = useState(false);
+  const [modalStep, setModalStep] = useState<'detail' | 'checkout'>('detail');
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [etaPreviewType, setEtaPreviewType] = useState<'dine_in' | 'takeaway'>(
+    'dine_in'
+  );
 
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
@@ -47,6 +77,8 @@ export function RestaurantDetailModal({
     setLoading(true);
     setError('');
     setImageFailed(false);
+    setModalStep('detail');
+    setCart([]);
     setReviewError('');
     setReviewSuccess('');
     setRating(5);
@@ -121,10 +153,53 @@ export function RestaurantDetailModal({
   };
 
   const groupedMenus = detail ? groupMenusByCategory(detail.menus) : [];
+  const { totalItems, totalAmount } = calculateCartTotal(cart);
+  const dynamicEta = detail
+    ? calculateDynamicEta({
+        basePrepMinutes: detail.base_prep_minutes,
+        activeQueueCount: detail.active_queue_count,
+        cartItemCount: totalItems,
+        orderType: etaPreviewType,
+      })
+    : null;
+
+  const handleAddToCart = (item: MenuItem) => {
+    setCart((prev) => {
+      const existing = prev.find((c) => c.menu_id === item.menu_id);
+      if (existing) {
+        return prev.map((c) =>
+          c.menu_id === item.menu_id ? { ...c, quantity: c.quantity + 1 } : c
+        );
+      }
+      return [
+        ...prev,
+        {
+          menu_id: item.menu_id,
+          item_name: item.item_name,
+          price: item.price,
+          quantity: 1,
+        },
+      ];
+    });
+  };
+
+  const handleUpdateCartQuantity = (menuId: number, delta: number) => {
+    setCart((prev) => {
+      const updated = prev
+        .map((c) =>
+          c.menu_id === menuId ? { ...c, quantity: c.quantity + delta } : c
+        )
+        .filter((c) => c.quantity > 0);
+      if (updated.length === 0 && modalStep === 'checkout') {
+        setModalStep('detail');
+      }
+      return updated;
+    });
+  };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/55 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/55 p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -152,14 +227,35 @@ export function RestaurantDetailModal({
               {detail ? detail.name : 'Detail Restoran'}
             </h2>
           </div>
-          <button
-            type="button"
-            aria-label="Tutup detail restoran"
-            onClick={onClose}
-            className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 cursor-pointer shrink-0"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {detail && (
+              <button
+                type="button"
+                aria-label={
+                  isFavorite
+                    ? `Hapus ${detail.name} dari favorit`
+                    : `Simpan ${detail.name} ke favorit`
+                }
+                aria-pressed={isFavorite}
+                onClick={() => onToggleFavorite(detail.restaurant_id)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-100 cursor-pointer"
+              >
+                <Heart
+                  className={`h-4 w-4 ${
+                    isFavorite ? 'fill-red-600 text-red-600' : 'text-zinc-500'
+                  }`}
+                />
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label="Tutup detail restoran"
+              onClick={onClose}
+              className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Konten Scrollable */}
@@ -179,7 +275,26 @@ export function RestaurantDetailModal({
             </div>
           )}
 
-          {!loading && !error && detail && (
+          {!loading && !error && detail && modalStep === 'checkout' && (
+            <OrderCheckoutPanel
+              restaurantId={detail.restaurant_id}
+              restaurantName={detail.name}
+              basePrepMinutes={detail.base_prep_minutes}
+              activeQueueCount={detail.active_queue_count}
+              cart={cart}
+              user={user}
+              onBack={() => setModalStep('detail')}
+              onUpdateQuantity={handleUpdateCartQuantity}
+              onRequireLogin={onRequireLogin}
+              onOrderCreated={(order) => {
+                setCart([]);
+                setModalStep('detail');
+                onOrderCreated(order);
+              }}
+            />
+          )}
+
+          {!loading && !error && detail && modalStep === 'detail' && (
             <div className="space-y-6">
               {/* Info Utama & Aksi */}
               <div className="grid grid-cols-1 gap-5 md:grid-cols-[220px_1fr] items-stretch">
@@ -249,6 +364,98 @@ export function RestaurantDetailModal({
                 </div>
               </div>
 
+              {/* Estimasi Waktu Penyelesaian Pesanan (ETA Dinamis) */}
+              {dynamicEta && (
+                <div
+                  data-testid="dynamic-eta-panel"
+                  className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 sm:p-5 space-y-3"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-red-600 shrink-0">
+                        <Clock className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                          <span className="font-semibold text-zinc-900">
+                            Estimasi Waktu Penyelesaian (ETA)
+                          </span>
+                          <span aria-hidden="true" className="text-zinc-300">
+                            ·
+                          </span>
+                          <span
+                            className={
+                              dynamicEta.queueLevel === 'ramai'
+                                ? 'font-semibold text-amber-700'
+                                : dynamicEta.queueLevel === 'sepi'
+                                ? 'font-semibold text-emerald-700'
+                                : 'font-semibold text-zinc-700'
+                            }
+                          >
+                            {dynamicEta.queueLevelLabel}
+                          </span>
+                          <span aria-hidden="true" className="text-zinc-300">
+                            ·
+                          </span>
+                          <span className="tabular-nums">
+                            {detail.active_queue_count ?? 0} antrean aktif
+                          </span>
+                        </div>
+                        <p className="mt-1 font-display text-lg font-bold text-zinc-950 font-mono-tabular">
+                          {dynamicEta.minMinutes}–{dynamicEta.maxMinutes} menit{' '}
+                          <span className="text-sm font-semibold text-red-600">
+                            ({dynamicEta.readyAtLabel})
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div
+                      role="group"
+                      aria-label="Simulasi ETA metode pengambilan"
+                      className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5 self-start sm:self-center shrink-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setEtaPreviewType('dine_in')}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                          etaPreviewType === 'dine_in'
+                            ? 'bg-zinc-900 text-white'
+                            : 'text-zinc-600 hover:text-zinc-950'
+                        }`}
+                      >
+                        Makan di Tempat
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEtaPreviewType('takeaway')}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                          etaPreviewType === 'takeaway'
+                            ? 'bg-zinc-900 text-white'
+                            : 'text-zinc-600 hover:text-zinc-950'
+                        }`}
+                      >
+                        Bawa Pulang
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-zinc-700 leading-relaxed">
+                    {dynamicEta.recommendationText}
+                  </p>
+
+                  <p className="text-xs text-zinc-500 font-mono-tabular border-t border-zinc-200/80 pt-2.5">
+                    Rincian: Dasar dapur {dynamicEta.factors.baseMinutes} mnt ·
+                    Antrean {dynamicEta.factors.queueMinutes} mnt · Menu ({totalItems}{' '}
+                    item) {dynamicEta.factors.itemMinutes} mnt · Penyiapan{' '}
+                    {dynamicEta.factors.serviceMinutes} mnt
+                    {dynamicEta.factors.peakMinutes > 0
+                      ? ` · Jam sibuk +${dynamicEta.factors.peakMinutes} mnt`
+                      : ''}
+                  </p>
+                </div>
+              )}
+
               {/* Grid Menu & Ulasan */}
               <div className="grid grid-cols-1 gap-8 border-t border-zinc-200 pt-6 lg:grid-cols-2">
                 {/* Kolom Kiri: Daftar Menu */}
@@ -274,19 +481,69 @@ export function RestaurantDetailModal({
                             {group.category}
                           </h4>
                           <ul className="divide-y divide-zinc-100">
-                            {group.items.map((item) => (
-                              <li
-                                key={item.menu_id}
-                                className="flex items-start justify-between gap-4 py-2.5 text-sm"
-                              >
-                                <span className="text-zinc-800 leading-snug">
-                                  {item.item_name}
-                                </span>
-                                <span className="font-mono-tabular text-xs font-semibold text-zinc-900 whitespace-nowrap shrink-0 pt-0.5">
-                                  {formatRupiah(item.price)}
-                                </span>
-                              </li>
-                            ))}
+                            {group.items.map((item) => {
+                              const inCart = cart.find(
+                                (c) => c.menu_id === item.menu_id
+                              );
+                              return (
+                                <li
+                                  key={item.menu_id}
+                                  className="flex items-center justify-between gap-3 py-2.5 text-sm"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-zinc-800 leading-snug">
+                                      {item.item_name}
+                                    </p>
+                                    <p className="mt-0.5 font-mono-tabular text-xs font-semibold text-zinc-900">
+                                      {formatRupiah(item.price)}
+                                    </p>
+                                  </div>
+
+                                  {inCart ? (
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <button
+                                        type="button"
+                                        aria-label={`Kurangi ${item.item_name}`}
+                                        onClick={() =>
+                                          handleUpdateCartQuantity(
+                                            item.menu_id,
+                                            -1
+                                          )
+                                        }
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-xs font-bold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
+                                      >
+                                        -
+                                      </button>
+                                      <span className="w-5 text-center font-mono-tabular text-xs font-bold text-zinc-950">
+                                        {inCart.quantity}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        aria-label={`Tambah lagi ${item.item_name}`}
+                                        onClick={() =>
+                                          handleUpdateCartQuantity(
+                                            item.menu_id,
+                                            1
+                                          )
+                                        }
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-xs font-bold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddToCart(item)}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-800 hover:border-red-600 hover:text-red-600 transition-colors shrink-0 cursor-pointer"
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                      <span>Tambah</span>
+                                    </button>
+                                  )}
+                                </li>
+                              );
+                            })}
                           </ul>
                         </div>
                       ))}
@@ -428,6 +685,32 @@ export function RestaurantDetailModal({
             </div>
           )}
         </div>
+
+        {/* Bilah Keranjang Pesanan */}
+        {!loading && detail && modalStep === 'detail' && totalItems > 0 && (
+          <div className="flex flex-col gap-3 border-t border-zinc-200 bg-zinc-50 px-6 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-600 text-white shrink-0">
+                <ShoppingBag className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs text-zinc-500 tabular-nums">
+                  {totalItems} item · Pesan &amp; Bayar (Ambil Sendiri)
+                </p>
+                <p className="font-mono-tabular text-sm font-bold text-zinc-950">
+                  {formatRupiah(totalAmount)}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setModalStep('checkout')}
+              className="rounded-xl bg-red-600 px-5 py-2.5 text-xs font-semibold text-white hover:bg-red-700 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              Lanjut Pesan (Makan di Tempat / Bawa Pulang)
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

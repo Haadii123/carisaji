@@ -143,6 +143,20 @@ export function Navbar({
             )}
           </div>
 
+          {user && (
+            <button
+              type="button"
+              onClick={() => handleSelectPage('pesanan')}
+              className={`py-1 whitespace-nowrap shrink-0 cursor-pointer transition-colors border-b-2 ${
+                activePage === 'pesanan'
+                  ? 'border-red-600 text-zinc-950 font-semibold'
+                  : 'border-transparent text-zinc-600 hover:text-zinc-950'
+              }`}
+            >
+              Pesanan Saya
+            </button>
+          )}
+
           {user?.role === 'admin' && (
             <button
               type="button"
@@ -237,6 +251,19 @@ export function Navbar({
           >
             Restoran Terdekat
           </button>
+          {user && (
+            <button
+              type="button"
+              onClick={() => handleSelectPage('pesanan')}
+              className={`block w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium ${
+                activePage === 'pesanan'
+                  ? 'bg-red-50 text-red-700 font-semibold'
+                  : 'text-zinc-700 hover:bg-zinc-50'
+              }`}
+            >
+              Pesanan Saya
+            </button>
+          )}
           {user?.role === 'admin' && (
             <button
               type="button"
@@ -281,7 +308,7 @@ export function Navbar({
                 }}
                 className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white"
               >
-                Masuk / Daftar
+                Masuk
               </button>
             )}
           </div>

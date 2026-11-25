@@ -88,7 +88,7 @@ export function AuthModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -97,7 +97,7 @@ export function AuthModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-modal-title"
-        className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl"
+        className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -109,8 +109,8 @@ export function AuthModal({
             </h2>
             <p className="mt-1 text-sm text-zinc-500">
               {mode === 'login'
-                ? 'Masuk untuk menulis ulasan atau mengelola data restoran.'
-                : 'Buat akun Pencari Kuliner untuk berbagi ulasan.'}
+                ? 'Masuk menggunakan email dan kata sandi akun CARISAJI Anda.'
+                : 'Buat akun baru untuk memesan makanan dan memberi ulasan.'}
             </p>
           </div>
           <button
@@ -123,7 +123,7 @@ export function AuthModal({
           </button>
         </div>
 
-        {/* Segmented Tabs: Masuk / Daftar */}
+        {/* Tab Masuk / Daftar */}
         <div className="mt-5 grid grid-cols-2 gap-1 rounded-lg bg-zinc-100 p-1">
           <button
             type="button"
@@ -216,7 +216,9 @@ export function AuthModal({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder={
-                mode === 'register' ? 'Minimal 6 karakter' : 'Masukkan kata sandi'
+                mode === 'register'
+                  ? 'Minimal 6 karakter'
+                  : 'Masukkan kata sandi'
               }
               className="mt-1.5 w-full rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-red-600 focus:outline-none"
               required
@@ -239,7 +241,7 @@ export function AuthModal({
         {mode === 'login' && (
           <div className="mt-5 border-t border-zinc-200 pt-4">
             <p className="text-xs font-medium text-zinc-500">
-              Akses cepat akun contoh (untuk pengujian lokal):
+              Akses cepat akun contoh:
             </p>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button

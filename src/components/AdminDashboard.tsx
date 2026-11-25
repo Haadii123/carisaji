@@ -1,8 +1,14 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2, UtensilsCrossed } from 'lucide-react';
 import { api } from '../services/api';
-import type { MenuItem, Restaurant } from '../types';
-import { formatRupiah } from '../utils/format';
+import type { MenuItem, Order, OrderStatus, Restaurant } from '../types';
+import { formatRupiah, formatTanggalId } from '../utils/format';
+import {
+  getOrderStatusLabel,
+  getOrderTypeLabel,
+  getPaymentMethodShortLabel,
+  getPaymentStatusLabel,
+} from '../utils/order';
 
 interface AdminDashboardProps {
   restaurants: Restaurant[];
@@ -10,7 +16,7 @@ interface AdminDashboardProps {
   onNotify: (message: string) => void;
 }
 
-type AdminTab = 'restoran' | 'menu';
+type AdminTab = 'restoran' | 'menu' | 'pesanan';
 
 export function AdminDashboard({
   restaurants,
@@ -48,6 +54,11 @@ export function AdminDashboard({
   const [savingMenu, setSavingMenu] = useState(false);
   const [menuError, setMenuError] = useState('');
 
+  // Kelola Pesanan
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+
   useEffect(() => {
     if (
       restaurants.length > 0 &&
@@ -73,9 +84,26 @@ export function AdminDashboard({
     }
   };
 
+  const loadOrders = async () => {
+    setOrdersLoading(true);
+    try {
+      const res = await api.getAllOrders();
+      setOrders(res.orders);
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : 'Gagal memuat daftar pesanan.'
+      );
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'menu' && selectedRestId) {
       loadMenus(selectedRestId);
+    }
+    if (activeTab === 'pesanan') {
+      loadOrders();
     }
   }, [activeTab, selectedRestId]);
 
@@ -225,6 +253,24 @@ export function AdminDashboard({
     }
   };
 
+  const handleUpdateOrderStatus = async (
+    orderId: number,
+    nextStatus: OrderStatus
+  ) => {
+    setUpdatingOrderId(orderId);
+    try {
+      const res = await api.updateOrderStatus(orderId, nextStatus);
+      onNotify(res.message);
+      await loadOrders();
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : 'Gagal memperbarui status pesanan.'
+      );
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
   const totalMenus = restaurants.reduce(
     (sum, r) => sum + (r.menu_count || 0),
     0
@@ -305,6 +351,17 @@ export function AdminDashboard({
             }`}
           >
             Kelola Menu Restoran
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('pesanan')}
+            className={`rounded-lg px-4 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+              activeTab === 'pesanan'
+                ? 'bg-white text-zinc-950 shadow-xs'
+                : 'text-zinc-600 hover:text-zinc-900'
+            }`}
+          >
+            Kelola Pesanan
           </button>
         </div>
 
@@ -708,6 +765,139 @@ export function AdminDashboard({
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: KELOLA PESANAN */}
+      {activeTab === 'pesanan' && (
+        <div className="mt-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-500 tabular-nums">
+              {orders.length} pesanan masuk (Makan di Tempat &amp; Bawa Pulang)
+            </p>
+            <button
+              type="button"
+              onClick={loadOrders}
+              className="rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer"
+            >
+              Muat Ulang Pesanan
+            </button>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-zinc-200 bg-white">
+            {ordersLoading ? (
+              <div className="p-10 text-center text-sm text-zinc-500">
+                Memuat daftar pesanan pelanggan...
+              </div>
+            ) : orders.length === 0 ? (
+              <div className="p-10 text-center text-sm text-zinc-500">
+                Belum ada pesanan yang masuk dari pelanggan.
+              </div>
+            ) : (
+              <table className="w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-600">
+                    <th className="px-4 py-3 whitespace-nowrap">Kode &amp; Waktu</th>
+                    <th className="px-4 py-3">Pelanggan &amp; Gerai</th>
+                    <th className="px-4 py-3">Item Pesanan</th>
+                    <th className="px-4 py-3 whitespace-nowrap">Metode &amp; Bayar</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Total</th>
+                    <th className="px-4 py-3 whitespace-nowrap">Status Pesanan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {orders.map((order) => {
+                    const isPaid = order.payment_status === 'lunas';
+                    return (
+                      <tr key={order.order_id} className="align-top hover:bg-zinc-50/70">
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <p className="font-mono-tabular text-xs font-bold text-zinc-950">
+                            {order.order_code}
+                          </p>
+                          <p className="mt-0.5 text-xs text-zinc-500">
+                            {formatTanggalId(order.created_at)}
+                          </p>
+                          <p className="mt-0.5 text-xs font-medium text-zinc-700">
+                            Tiba: {order.pickup_time}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3.5 max-w-xs">
+                          <p className="font-semibold text-zinc-950">
+                            {order.customer_name || `Pengguna #${order.user_id}`}
+                          </p>
+                          <p className="mt-0.5 text-xs text-zinc-600">
+                            {order.restaurant_name}
+                          </p>
+                          {order.customer_note && (
+                            <p className="mt-1 text-xs text-zinc-500">
+                              Catatan: {order.customer_note}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5 max-w-xs">
+                          <ul className="space-y-0.5 text-xs text-zinc-700">
+                            {order.items.map((it, idx) => (
+                              <li key={`${it.order_item_id || idx}`}>
+                                <span className="font-mono-tabular font-semibold text-zinc-950">
+                                  {it.quantity}x
+                                </span>{' '}
+                                {it.item_name}
+                              </li>
+                            ))}
+                          </ul>
+                        </td>
+                        <td className="px-4 py-3.5 whitespace-nowrap text-xs">
+                          <p className="font-semibold text-zinc-900">
+                            {getOrderTypeLabel(order.order_type)}
+                          </p>
+                          <p className="mt-0.5 text-zinc-500">
+                            {getPaymentMethodShortLabel(order.payment_method)}
+                          </p>
+                          <p
+                            className={`mt-0.5 font-semibold ${
+                              isPaid ? 'text-emerald-700' : 'text-amber-700'
+                            }`}
+                          >
+                            {getPaymentStatusLabel(order.payment_status)}
+                          </p>
+                        </td>
+                        <td className="px-4 py-3.5 text-right font-mono-tabular text-xs font-bold text-zinc-950 whitespace-nowrap">
+                          {formatRupiah(order.total_amount)}
+                        </td>
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <select
+                            aria-label={`Ubah status pesanan ${order.order_code}`}
+                            value={order.order_status}
+                            disabled={updatingOrderId === order.order_id}
+                            onChange={(e) =>
+                              handleUpdateOrderStatus(
+                                order.order_id,
+                                e.target.value as OrderStatus
+                              )
+                            }
+                            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 focus:border-red-600 focus:outline-none disabled:opacity-60"
+                          >
+                            <option value="menunggu_pembayaran">
+                              Menunggu Pembayaran
+                            </option>
+                            <option value="sedang_disiapkan">
+                              {getOrderStatusLabel('sedang_disiapkan', order.order_type)}
+                            </option>
+                            <option value="siap_diambil">
+                              {getOrderStatusLabel('siap_diambil', order.order_type)}
+                            </option>
+                            <option value="selesai">
+                              {getOrderStatusLabel('selesai', order.order_type)}
+                            </option>
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
           </div>
         </div>

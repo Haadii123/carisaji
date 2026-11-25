@@ -4,20 +4,17 @@ import { AuthModal } from './components/AuthModal';
 import { MapView } from './components/MapView';
 import { Navbar } from './components/Navbar';
 import { NearestRestaurants } from './components/NearestRestaurants';
+import { OrdersPage } from './components/OrdersPage';
+import { PaymentInstructionModal } from './components/PaymentInstructionModal';
 import { RestaurantDetailModal } from './components/RestaurantDetailModal';
 import { RestaurantList } from './components/RestaurantList';
-import {
-  api,
-  clearAuthSession,
-  getStoredToken,
-  getStoredUser,
-  saveAuthSession,
-} from './services/api';
-import type { ActivePage, Restaurant, User } from './types';
+import { api, getAuthToken, setAuthToken } from './services/api';
+import type { ActivePage, Order, Restaurant, User } from './types';
+import { loadFavoriteIds, saveFavoriteIds } from './utils/favorites';
 
 export default function App() {
   const [activePage, setActivePage] = useState<ActivePage>('peta');
-  const [user, setUser] = useState<User | null>(() => getStoredUser());
+  const [user, setUser] = useState<User | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -30,10 +27,19 @@ export default function App() {
   >(null);
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>(
-    'login'
-  );
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [toastMessage, setToastMessage] = useState('');
+
+  // Fitur modular: Restoran Favorit & Pesanan
+  const [favoriteIds, setFavoriteIds] = useState<number[]>(() =>
+    loadFavoriteIds()
+  );
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState('');
+  const [activePaymentOrder, setActivePaymentOrder] = useState<Order | null>(
+    null
+  );
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -62,29 +68,64 @@ export default function App() {
     }
   }, []);
 
+  const fetchMyOrders = useCallback(async () => {
+    if (!getAuthToken()) {
+      setOrders([]);
+      return;
+    }
+    setOrdersLoading(true);
+    setOrdersError('');
+    try {
+      const res = await api.getMyOrders();
+      setOrders(res.orders);
+    } catch (err) {
+      setOrdersError(
+        err instanceof Error
+          ? err.message
+          : 'Gagal memuat daftar pesanan Anda.'
+      );
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchRestaurants();
   }, [fetchRestaurants]);
 
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) return;
-    api
-      .getMe()
-      .then((res) => {
-        setUser(res.user);
-      })
-      .catch(() => {
-        clearAuthSession();
-        setUser(null);
-      });
-  }, []);
+    if (activePage === 'pesanan' && user) {
+      fetchMyOrders();
+    }
+  }, [activePage, user, fetchMyOrders]);
+
+  const handleToggleFavorite = (restaurantId: number) => {
+    setFavoriteIds((prev) => {
+      const exists = prev.includes(restaurantId);
+      const next = exists
+        ? prev.filter((id) => id !== restaurantId)
+        : [...prev, restaurantId];
+      saveFavoriteIds(next);
+      showToast(
+        exists
+          ? 'Restoran dihapus dari daftar favorit.'
+          : 'Restoran disimpan ke daftar favorit.'
+      );
+      return next;
+    });
+  };
 
   const handleNavigate = (page: ActivePage) => {
     if (page === 'admin' && user?.role !== 'admin') {
-      setAuthModalMode('login');
+      setAuthMode('login');
       setAuthModalOpen(true);
       showToast('Masuk sebagai Pengelola Data untuk membuka Kelola Data.');
+      return;
+    }
+    if (page === 'pesanan' && !user) {
+      setAuthMode('login');
+      setAuthModalOpen(true);
+      showToast('Silakan masuk terlebih dahulu untuk melihat pesanan Anda.');
       return;
     }
     setActivePage(page);
@@ -95,16 +136,19 @@ export default function App() {
     loggedInUser: User,
     message: string
   ) => {
-    saveAuthSession(token, loggedInUser);
+    setAuthToken(token);
     setUser(loggedInUser);
     setAuthModalOpen(false);
     showToast(message);
+    fetchMyOrders();
   };
 
   const handleLogout = () => {
-    clearAuthSession();
+    setAuthToken(null);
     setUser(null);
-    if (activePage === 'admin') {
+    setOrders([]);
+    setActivePaymentOrder(null);
+    if (activePage === 'admin' || activePage === 'pesanan') {
       setActivePage('peta');
     }
     showToast('Anda telah keluar dari akun CARISAJI.');
@@ -115,6 +159,23 @@ export default function App() {
     setActivePage('peta');
   };
 
+  const handleOrderCreated = (order: Order) => {
+    setSelectedRestaurantId(null);
+    setActivePaymentOrder(order);
+    setOrders((prev) => [order, ...prev]);
+    fetchRestaurants();
+    showToast(`Pesanan ${order.order_code} berhasil dibuat.`);
+  };
+
+  const handleOrderUpdated = (updatedOrder: Order, message: string) => {
+    setActivePaymentOrder(updatedOrder);
+    setOrders((prev) =>
+      prev.map((o) => (o.order_id === updatedOrder.order_id ? updatedOrder : o))
+    );
+    fetchRestaurants();
+    showToast(message);
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900">
       <Navbar
@@ -122,7 +183,7 @@ export default function App() {
         onNavigate={handleNavigate}
         user={user}
         onOpenAuth={(mode) => {
-          setAuthModalMode(mode);
+          setAuthMode(mode);
           setAuthModalOpen(true);
         }}
         onLogout={handleLogout}
@@ -144,6 +205,8 @@ export default function App() {
             restaurants={restaurants}
             loading={loading}
             error={loadError}
+            favoriteIds={favoriteIds}
+            onToggleFavorite={handleToggleFavorite}
             onRetry={fetchRestaurants}
             onSelectRestaurant={(id) => setSelectedRestaurantId(id)}
           />
@@ -155,6 +218,17 @@ export default function App() {
             loading={loading}
             onSelectRestaurant={(id) => setSelectedRestaurantId(id)}
             onViewOnMap={handleViewOnMap}
+          />
+        )}
+
+        {activePage === 'pesanan' && user && (
+          <OrdersPage
+            orders={orders}
+            loading={ordersLoading}
+            error={ordersError}
+            onRefresh={fetchMyOrders}
+            onPayOrder={(order) => setActivePaymentOrder(order)}
+            onExploreRestaurants={() => setActivePage('daftar')}
           />
         )}
 
@@ -177,23 +251,37 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Modal Detail Menu & Ulasan */}
+      {/* Modal Detail Menu, ETA & Ulasan */}
       <RestaurantDetailModal
         restaurantId={selectedRestaurantId}
         user={user}
+        isFavorite={
+          selectedRestaurantId !== null &&
+          favoriteIds.includes(selectedRestaurantId)
+        }
+        onToggleFavorite={handleToggleFavorite}
         onClose={() => setSelectedRestaurantId(null)}
         onRequireLogin={() => {
           setSelectedRestaurantId(null);
-          setAuthModalMode('login');
+          setAuthMode('login');
           setAuthModalOpen(true);
         }}
         onReviewSubmitted={fetchRestaurants}
+        onOrderCreated={handleOrderCreated}
       />
 
-      {/* Modal Masuk / Daftar */}
+      {/* Modal Instruksi Pembayaran QRIS / Virtual Account */}
+      <PaymentInstructionModal
+        order={activePaymentOrder}
+        onClose={() => setActivePaymentOrder(null)}
+        onOrderUpdated={handleOrderUpdated}
+        onOpenMyOrders={() => setActivePage('pesanan')}
+      />
+
+      {/* Modal Masuk & Daftar */}
       <AuthModal
         isOpen={authModalOpen}
-        initialMode={authModalMode}
+        initialMode={authMode}
         onClose={() => setAuthModalOpen(false)}
         onSuccess={handleAuthSuccess}
       />

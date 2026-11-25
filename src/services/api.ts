@@ -1,40 +1,31 @@
-import type { MenuItem, Restaurant, RestaurantDetail, Review, User } from '../types';
+import type {
+  MenuItem,
+  Order,
+  OrderStatus,
+  OrderType,
+  PaymentMethod,
+  Restaurant,
+  RestaurantDetail,
+  Review,
+  User,
+} from '../types';
 
-const TOKEN_KEY = 'carisaji_token';
-const USER_KEY = 'carisaji_user';
+// Simpan token autentikasi di memori aplikasi
+let inMemoryToken: string | null = null;
 
-export function getStoredToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
+export function setAuthToken(token: string | null): void {
+  inMemoryToken = token;
 }
 
-export function getStoredUser(): User | null {
-  try {
-    const raw = localStorage.getItem(USER_KEY);
-    return raw ? (JSON.parse(raw) as User) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveAuthSession(token: string, user: User): void {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-}
-
-export function clearAuthSession(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+export function getAuthToken(): string | null {
+  return inMemoryToken;
 }
 
 async function request<T>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = getStoredToken();
+  const token = inMemoryToken;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) || {}),
@@ -166,6 +157,47 @@ export const api = {
       {
         method: 'POST',
         body: JSON.stringify(payload),
+      }
+    );
+  },
+
+  async createOrder(payload: {
+    restaurant_id: number;
+    order_type: OrderType;
+    pickup_time: string;
+    customer_note?: string;
+    payment_method: PaymentMethod;
+    items: Array<{ menu_id: number; quantity: number }>;
+  }) {
+    return request<{ message: string; order: Order }>('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getMyOrders() {
+    return request<{ orders: Order[] }>('/api/orders/my');
+  },
+
+  async confirmOrderPayment(orderId: number) {
+    return request<{ message: string; order: Order }>(
+      `/api/orders/${orderId}/pay`,
+      {
+        method: 'POST',
+      }
+    );
+  },
+
+  async getAllOrders() {
+    return request<{ orders: Order[] }>('/api/orders');
+  },
+
+  async updateOrderStatus(orderId: number, orderStatus: OrderStatus) {
+    return request<{ message: string; order?: Order }>(
+      `/api/orders/${orderId}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ order_status: orderStatus }),
       }
     );
   },

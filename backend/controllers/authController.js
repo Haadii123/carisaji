@@ -1,8 +1,8 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import pool from '../config/db.js';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'carisaji_pangkalpinang_rahasia_2026';
+import { runWithDb } from '../config/db.js';
+import { JWT_SECRET } from '../config/jwt.js';
+import { nextAutoId } from '../config/sqlFallbackStore.js';
 
 export const register = async (req, res) => {
   try {
@@ -21,36 +21,72 @@ export const register = async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const [existing] = await pool.query(
-      'SELECT user_id FROM users WHERE email = ? LIMIT 1',
-      [normalizedEmail]
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const outcome = await runWithDb(
+      async (pool) => {
+        const [existing] = await pool.query(
+          'SELECT user_id FROM users WHERE email = ? LIMIT 1',
+          [normalizedEmail]
+        );
+        if (existing.length > 0) {
+          return { conflict: true };
+        }
+        const [result] = await pool.query(
+          'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
+          [full_name.trim(), normalizedEmail, hashedPassword, 'user']
+        );
+        return {
+          conflict: false,
+          user: {
+            user_id: result.insertId,
+            full_name: full_name.trim(),
+            email: normalizedEmail,
+            role: 'user',
+          },
+        };
+      },
+      (store) => {
+        const existing = store.users.find(
+          (u) => String(u.email).toLowerCase() === normalizedEmail
+        );
+        if (existing) return { conflict: true };
+        const userId = nextAutoId(store.users, 'user_id');
+        const newRow = {
+          user_id: userId,
+          uid: `seed-user-${userId}`,
+          full_name: full_name.trim(),
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: 'user',
+          created_at: new Date().toISOString(),
+        };
+        store.users.push(newRow);
+        return {
+          conflict: false,
+          user: {
+            user_id: userId,
+            full_name: newRow.full_name,
+            email: newRow.email,
+            role: 'user',
+          },
+        };
+      }
     );
 
-    if (existing.length > 0) {
+    if (outcome.conflict) {
       return res.status(409).json({
-        message: 'Alamat email ini sudah terdaftar. Silakan gunakan email lain atau masuk.',
+        message:
+          'Alamat email ini sudah terdaftar. Silakan gunakan email lain atau masuk.',
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const [result] = await pool.query(
-      'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
-      [full_name.trim(), normalizedEmail, hashedPassword, 'user']
-    );
-
-    const user = {
-      user_id: result.insertId,
-      full_name: full_name.trim(),
-      email: normalizedEmail,
-      role: 'user',
-    };
-
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(outcome.user, JWT_SECRET, { expiresIn: '7d' });
 
     return res.status(201).json({
       message: 'Pendaftaran berhasil. Selamat datang di CARISAJI.',
       token,
-      user,
+      user: outcome.user,
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -71,20 +107,34 @@ export const login = async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const [rows] = await pool.query(
-      'SELECT user_id, full_name, email, password, role FROM users WHERE email = ? LIMIT 1',
-      [normalizedEmail]
+
+    const foundUser = await runWithDb(
+      async (pool) => {
+        const [rows] = await pool.query(
+          'SELECT user_id, full_name, email, password, role FROM users WHERE email = ? LIMIT 1',
+          [normalizedEmail]
+        );
+        return rows[0] || null;
+      },
+      (store) =>
+        store.users.find(
+          (u) => String(u.email).toLowerCase() === normalizedEmail
+        ) || null
     );
 
-    if (rows.length === 0) {
+    if (!foundUser) {
       return res.status(401).json({
         message: 'Email atau kata sandi tidak sesuai.',
       });
     }
 
-    const foundUser = rows[0];
-    const isPasswordValid = await bcrypt.compare(password, foundUser.password);
+    if (!foundUser.password) {
+      return res.status(401).json({
+        message: 'Akun ini belum memiliki kata sandi yang valid.',
+      });
+    }
 
+    const isPasswordValid = await bcrypt.compare(password, foundUser.password);
     if (!isPasswordValid) {
       return res.status(401).json({
         message: 'Email atau kata sandi tidak sesuai.',
@@ -115,14 +165,33 @@ export const login = async (req, res) => {
 
 export const getProfile = async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT user_id, full_name, email, role, created_at FROM users WHERE user_id = ? LIMIT 1',
-      [req.user.user_id]
+    const profile = await runWithDb(
+      async (pool) => {
+        const [rows] = await pool.query(
+          'SELECT user_id, full_name, email, role, created_at FROM users WHERE user_id = ? LIMIT 1',
+          [req.user.user_id]
+        );
+        return rows[0] || null;
+      },
+      (store) => {
+        const found = store.users.find(
+          (u) => Number(u.user_id) === Number(req.user.user_id)
+        );
+        if (!found) return null;
+        return {
+          user_id: found.user_id,
+          full_name: found.full_name,
+          email: found.email,
+          role: found.role,
+          created_at: found.created_at,
+        };
+      }
     );
-    if (rows.length === 0) {
+
+    if (!profile) {
       return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
     }
-    return res.json({ user: rows[0] });
+    return res.json({ user: profile });
   } catch (error) {
     console.error('Profile error:', error);
     return res.status(500).json({ message: 'Gagal memuat profil pengguna.' });
